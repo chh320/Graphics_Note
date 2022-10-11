@@ -11,6 +11,10 @@ export default defineConfig({
             {
               text: 'Learn OpenGL',
               link: '/OpenGL'
+            },
+            {
+              text: 'Ray Tracing One Weekend',
+              link: '/RayTracingOneWeekend'
             }
           ]
         }
