@@ -287,7 +287,7 @@ if (dot(ray_direction, outward_normal) > 0.0) {
 
 第二种是令法线始终指向射线的来源方向
 
-```c++
+```cpp
 bool front_face;
 if (dot(ray_direction, outward_normal) > 0.0) {
     // ray is inside the sphere
