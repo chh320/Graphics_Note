@@ -1,4 +1,6 @@
 import { defineConfig } from 'islandjs';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 
 export default defineConfig({
   title: 'Graphics Note',
@@ -20,5 +22,9 @@ export default defineConfig({
         }
       ]
     }
+  },
+  markdown: {
+    remarkPlugins: [remarkMath],
+    rehypePlugins: [rehypeKatex]
   }
 });

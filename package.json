@@ -1,6 +1,7 @@
 {
   "name": "Graphics_Note",
   "version": "1.0.0",
+  "type": "module",
   "scripts": {
     "dev": "island dev docs",
     "build": "island build docs",
@@ -11,6 +12,8 @@
   "devDependencies": {
     "@hitsuki9/prettier-config": "^1.0.0",
     "islandjs": "^0.3.3",
-    "prettier": "^2.7.1"
+    "prettier": "^2.7.1",
+    "rehype-katex": "^6.0.2",
+    "remark-math": "^5.1.1"
   }
 }
