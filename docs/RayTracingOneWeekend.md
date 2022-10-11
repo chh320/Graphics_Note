@@ -2,7 +2,7 @@
 
 ### Overview
 
-本课程使用PPM格式的图片输出，格式如下：
+本课程使用 PPM 格式的图片输出，格式如下：
 
 <img src="https://raytracing.github.io/images/fig-1.01-ppm.jpg" alt="img" style="zoom: 50%;" />
 
@@ -44,7 +44,7 @@ class ray {
 
 ### Sending Rays Into the Scene
 
-**预设：**viewport的Height为2个单位，宽高比为16：9，相机置于原点，Y-up，相机距离投影面1个单位，从左下角开始用两个向量进行遍历screen
+**预设：**viewport 的 Height 为 2 个单位，宽高比为 16：9，相机置于原点，Y-up，相机距离投影面 1 个单位，从左下角开始用两个向量进行遍历 screen
 
 ![img](https://raytracing.github.io/images/fig-1.03-cam-geom.jpg)
 
@@ -53,10 +53,13 @@ class ray {
 由于球体和射线的碰撞比较直观，因而考虑植入一个球体进行运算
 
 假设球体中心为(Cx, Cy, Cz)，在数学中写成如下形式，但不够美观：
+
 $$
 (x - C_x)^2 + (y - C_y)^2 + (z - C_z)^2 = r^2
 $$
-在图形学中，总希望数据与向量有关，而点C到点P的向量可以用**（P-C）**表示，因而结合向量点乘：
+
+在图形学中，总希望数据与向量有关，而点 C 到点 P 的向量可以用**（P-C）**表示，因而结合向量点乘：
+
 $$
 (\mathbf{P} - \mathbf{C}) \cdot (\mathbf{P} - \mathbf{C})
      = (x - C_x)^2 + (y - C_y)^2 + (z - C_z)^2
@@ -67,6 +70,7 @@ $$
 $$
 
 再引入射线方程替换变量：
+
 $$
 (\mathbf{P}(t) - \mathbf{C}) \cdot (\mathbf{P}(t) - \mathbf{C}) = r^2
 $$
@@ -77,11 +81,13 @@ $$
 $$
 
 移项，求解 t 即可
+
 $$
 t^2 \mathbf{b} \cdot \mathbf{b}
      + 2t \mathbf{b} \cdot (\mathbf{A}-\mathbf{C})
      + (\mathbf{A}-\mathbf{C}) \cdot (\mathbf{A}-\mathbf{C}) - r^2 = 0
 $$
+
 <img src="https://raytracing.github.io/images/fig-1.04-ray-sphere.jpg" alt="img" style="zoom:80%;" />
 
 若对上述求解公式进行硬编码：
@@ -149,12 +155,15 @@ t^2 \mathbf{b} \cdot \mathbf{b}
 $$
 
 由上式分别计算出**a、b、c：**
+
 $$
-a = \mathbf{b} \cdot \mathbf{b} \\ 
+a = \mathbf{b} \cdot \mathbf{b} \\
 b = 2*\mathbf{b} \cdot (\mathbf{A}-\mathbf{C}) \\
 c = (\mathbf{A}-\mathbf{C}) \cdot (\mathbf{A}-\mathbf{C}) - r^2
 $$
+
 可以发现 **b** 项中存在一个因子 **2**，若令 **b = 2h**：
+
 $$
 \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}
 $$
@@ -193,7 +202,7 @@ double hit_sphere(const point3& center, double radius, const ray& r) {
 
 在本课程中，统一将被击中的物体称为 `hittable` 的一种抽象类
 
-该类接受一个ray参数，tmin，tmax
+该类接受一个 ray 参数，tmin，tmax
 
 ```cpp
 // hittable.h
@@ -216,7 +225,7 @@ class hittable {
 #endif
 ```
 
-以sphere类为例
+以 sphere 类为例
 
 ```cpp
 // sphere.h
@@ -271,7 +280,7 @@ bool sphere::hit(const ray& r, double t_min, double t_max, hit_record& rec) cons
 
 ![img](https://raytracing.github.io/images/fig-1.06-normal-sides.jpg)
 
-由于surface有正反面，设定面的法线方向就有两种策略
+由于 surface 有正反面，设定面的法线方向就有两种策略
 
 第一种是法线始终指向物体外部，则射线与法线间位置关系如下判断：
 
@@ -311,7 +320,7 @@ struct hit_record {
     vec3 normal;
     double t;
     bool front_face;
-	
+
     // 判断若是从外部击中，则front_face = true，法线 = outward_normal
     inline void set_face_normal(const ray& r, const vec3& outward_normal) {
         front_face = dot(r.direction(), outward_normal) < 0;
@@ -322,7 +331,7 @@ struct hit_record {
 
 ### A List of Hittable Objects
 
-`hittable_list` 类主要是将所有object存入一个vector，随后依次比较是否存在交点，通过不断更新`closest_so_far`，最终可获得一个离得最近的交点
+`hittable_list` 类主要是将所有 object 存入一个 vector，随后依次比较是否存在交点，通过不断更新`closest_so_far`，最终可获得一个离得最近的交点
 
 ```cpp
 // hittable_list.h
@@ -371,7 +380,7 @@ bool hittable_list::hit(const ray& r, double t_min, double t_max, hit_record& re
 #endif
 ```
 
-其中 `shared_ptr` 是基于C++特性的智能指针，每个智能指针指向一个存储数据的内存和引用的指针数count，当count为0，自动delete该指针，从而能避免手动释放内存，具体可看[这个网站](https://blog.csdn.net/shaosunrise/article/details/85228823?ops_request_misc=%257B%2522request%255Fid%2522%253A%2522166546427716781432922292%2522%252C%2522scm%2522%253A%252220140713.130102334..%2522%257D&request_id=166546427716781432922292&biz_id=0&utm_medium=distribute.pc_search_result.none-task-blog-2~all~top_positive~default-1-85228823-null-null.142^v52^control,201^v3^control_1&utm_term=shared_ptr&spm=1018.2226.3001.4187)
+其中 `shared_ptr` 是基于 C++特性的智能指针，每个智能指针指向一个存储数据的内存和引用的指针数 count，当 count 为 0，自动 delete 该指针，从而能避免手动释放内存，具体可看[这个网站](https://blog.csdn.net/shaosunrise/article/details/85228823?ops_request_misc=%257B%2522request%255Fid%2522%253A%2522166546427716781432922292%2522%252C%2522scm%2522%253A%252220140713.130102334..%2522%257D&request_id=166546427716781432922292&biz_id=0&utm_medium=distribute.pc_search_result.none-task-blog-2~all~top_positive~default-1-85228823-null-null.142^v52^control,201^v3^control_1&utm_term=shared_ptr&spm=1018.2226.3001.4187)
 
 ```cpp
 shared_ptr<double> double_ptr = make_shared<double>(0.37);
