@@ -390,3 +390,545 @@ auto double_ptr = make_shared<double>(0.37);				// 和上句等价
 通常使用 `make_shared` 申请智能指针，可避免申请过程中造成的内存错误
 
 ### Antialiasing
+需要先准备可提供随机数的效用函数，以供后续随即采样使用
+
+注意，随机数的范围在 **[0, 1)，左闭右开**，从而确保了采样点不会重复
+
+```cpp
+#include <cstdlib>
+...
+
+inline double random_double() {
+    // Returns a random real in [0,1).
+    return rand() / (RAND_MAX + 1.0);
+}
+
+inline double random_double(double min, double max) {
+    // Returns a random real in [min,max).
+    return min + (max-min)*random_double();
+}
+```
+
+在新的C++特性中，引入了<random>头文件，可直接获得随机数
+
+```cpp
+#include <random>
+
+inline double random_double() {
+    static std::uniform_real_distribution<double> distribution(0.0, 1.0);
+    static std::mt19937 generator;
+    return distribution(generator);
+}
+```
+
+#### Generating Pixels with Multiple Samples
+
+![img](https://raytracing.github.io/images/fig-1.07-pixel-samples.jpg)
+
+在每一个[i, j]位置，分别随机采样`samples_per_pixel`个点，记录总color，在输出前除以样本数获得平均值
+
+```cpp
+for (int j = image_height-1; j >= 0; --j) {
+        std::cerr << "\rScanlines remaining: " << j << ' ' << std::flush;
+        for (int i = 0; i < image_width; ++i) {
+            color pixel_color(0, 0, 0);
+            for (int s = 0; s < samples_per_pixel; ++s) {
+                auto u = (i + random_double()) / (image_width-1);
+                auto v = (j + random_double()) / (image_height-1);
+                ray r = cam.get_ray(u, v);
+                pixel_color += ray_color(r, world);
+            }
+            write_color(std::cout, pixel_color, samples_per_pixel);
+        }
+    }
+```
+
+### Diffuse Materials
+
+对于漫反射材质，相同的入射光线往往有着不同的反射效果
+
+<img src="https://raytracing.github.io/images/fig-1.08-light-bounce.jpg" alt="img" style="zoom:67%;" />
+
+以入射光线与物体表面的交点出发，随机选择一个相切单位圆内的一点方向进行出射光线，进而模拟漫反射的无规则过程
+
+<img src="https://raytracing.github.io/images/fig-1.09-rand-vec.jpg" alt="img" style="zoom: 50%;" />
+
+采用一个递归的求色彩值过程，若随机选择的出射光线遇到物体，则继续漫反射，直到不再遇到物体，或者超过弹射的上限，返回颜色值
+
+```cpp
+color ray_color(const ray& r, const hittable& world, int depth) {	// depth为弹射上限
+    hit_record rec;
+
+    // If we've exceeded the ray bounce limit, no more light is gathered.
+    if (depth <= 0)
+        return color(0,0,0);
+
+    if (world.hit(r, 0.001, infinity, rec)) {	// t_min设0.001避免计算点存在浮点误差，即t = -0.00001 等情况造成物体表面着色问题
+        point3 target = rec.p + rec.normal + random_in_unit_sphere();
+        return 0.5 * ray_color(ray(rec.p, target - rec.p), world, depth-1);
+    }
+
+    vec3 unit_direction = unit_vector(r.direction());
+    auto t = 0.5*(unit_direction.y() + 1.0);
+    return (1.0-t)*color(1.0, 1.0, 1.0) + t*color(0.5, 0.7, 1.0);
+}
+```
+
+![img](https://raytracing.github.io/images/img-1.08-gamma-correct.png)
+
+#### True Lambertian Reflection
+
+拒绝法获取相切单位**球内点**的方式等价于使射线的方向更大概率靠近法线，更小概率掠射
+
+但真正的Lambertian 散射概率更接近于正太，但他的分布更加均匀，它的方法是在相切单位**球表面**进行随机取点
+
+![img](https://raytracing.github.io/images/fig-1.10-rand-unitvec.png)
+
+```cpp
+vec3 random_unit_vector() {
+    return unit_vector(random_in_unit_sphere());
+}
+```
+
+### Metal
+
+```cpp
+#ifndef MATERIAL_H
+#define MATERIAL_H
+
+#include "rtweekend.h"
+
+struct hit_record;
+
+class material {
+    public:
+        virtual bool scatter(
+            const ray& r_in, const hit_record& rec, color& attenuation, ray& scattered
+        ) const = 0;
+};
+
+#endif
+```
+
+![img](https://raytracing.github.io/images/fig-1.11-reflection.jpg)
+
+由图观察，反射向量 = **v + 2 b**， 由于**v · n** 为负值，因而公式改为 **-2 * (v · n) * n**
+
+```cpp
+vec3 reflect(const vec3& v, const vec3& n) {
+    return v - 2*dot(v,n)*n;
+}
+```
+
+定义一个金属类，重写scatter函数，计算对应的反射光线
+
+```cpp
+class metal : public material {
+    public:
+        metal(const color& a) : albedo(a) {}
+
+        virtual bool scatter(
+            const ray& r_in, const hit_record& rec, color& attenuation, ray& scattered
+        ) const override {
+            vec3 reflected = reflect(unit_vector(r_in.direction()), rec.normal);
+            scattered = ray(rec.p, reflected);
+            attenuation = albedo;
+            return (dot(scattered.direction(), rec.normal) > 0);
+        }
+
+    public:
+        color albedo;
+};
+```
+
+`ray_color`函数通过调用交错点存储的材质信息，调用对应材质类的scatter方法，获取其反射方向，进而计算颜色
+
+```cpp
+color ray_color(const ray& r, const hittable& world, int depth) {
+    hit_record rec;
+
+    // If we've exceeded the ray bounce limit, no more light is gathered.
+    if (depth <= 0)
+        return color(0,0,0);
+
+    if (world.hit(r, 0.001, infinity, rec)) {
+        ray scattered;
+        color attenuation;
+        if (rec.mat_ptr->scatter(r, rec, attenuation, scattered))
+            return attenuation * ray_color(scattered, world, depth-1);
+        return color(0,0,0);
+    }
+
+    vec3 unit_direction = unit_vector(r.direction());
+    auto t = 0.5*(unit_direction.y() + 1.0);
+    return (1.0-t)*color(1.0, 1.0, 1.0) + t*color(0.5, 0.7, 1.0);
+}
+```
+
+![img](https://raytracing.github.io/images/img-1.11-metal-shiny.png)
+
+
+
+#### Fuzzy Reflection
+
+也可以使用一个小球来为反射方向赋予一个随机值，从而生成一条新的出射向量
+
+球越大，对反射方向的影响越大，因而可考虑引入一个球半径参数作为 fuzziness 的参数
+
+问题：若sphere足够大，可能导致散射到表面之下。可以令表面直接吸收这些光
+
+![img](https://raytracing.github.io/images/fig-1.12-reflect-fuzzy.jpg)
+
+```cpp
+class metal : public material {
+    public:
+        metal(const color& a, double f) : albedo(a), fuzz(f < 1 ? f : 1) {}	// fuzz半径
+
+        virtual bool scatter(
+            const ray& r_in, const hit_record& rec, color& attenuation, ray& scattered
+        ) const override {
+            vec3 reflected = reflect(unit_vector(r_in.direction()), rec.normal);
+            scattered = ray(rec.p, reflected + fuzz*random_in_unit_sphere());	// 加上fuzz
+            attenuation = albedo;
+            return (dot(scattered.direction(), rec.normal) > 0);
+        }
+
+    public:
+        color albedo;
+        double fuzz;
+};
+```
+
+![img](https://raytracing.github.io/images/img-1.12-metal-fuzz.png)
+
+
+
+### Dielectrics
+
+介质会产生反射光和折射光
+
+#### Snell's Law
+
+$$
+\eta \cdot \sin\theta = \eta' \cdot \sin\theta'
+$$
+
+$$
+\sin\theta' = \frac{\eta}{\eta'} \cdot \sin\theta
+$$
+
+![img](https://raytracing.github.io/images/fig-1.13-refraction.jpg)
+
+假设折射光为 **R**，[详细推导](https://blog.csdn.net/MASILEJFOAISEGJIAE/article/details/104435265?ops_request_misc=%257B%2522request%255Fid%2522%253A%2522166556448716800184155716%2522%252C%2522scm%2522%253A%252220140713.130102334..%2522%257D&request_id=166556448716800184155716&biz_id=0&utm_medium=distribute.pc_search_result.none-task-blog-2~all~baidu_landing_v2~default-2-104435265-null-null.142^v53^control,201^v3^control_1&utm_term=%E6%8A%98%E5%B0%84%E5%90%91%E9%87%8F%E8%AE%A1%E7%AE%97&spm=1018.2226.3001.4187)
+$$
+\mathbf{R'} = \mathbf{R'}_{\bot} + \mathbf{R'}_{\parallel}
+$$
+
+$$
+\mathbf{R'}_{\bot} = \frac{\eta}{\eta'} (\mathbf{R} + \cos\theta \mathbf{n})
+$$
+
+$$
+\mathbf{R'}_{\parallel} = -\sqrt{1 - |\mathbf{R'}_{\bot}|^2} \mathbf{n}
+$$
+
+$$
+\mathbf{R'}_{\bot} =
+     \frac{\eta}{\eta'} (\mathbf{R} + (\mathbf{-R} \cdot \mathbf{n}) \mathbf{n})
+$$
+
+```cpp
+vec3 refract(const vec3& uv, const vec3& n, double etai_over_etat) {
+    auto cos_theta = fmin(dot(-uv, n), 1.0);
+    vec3 r_out_perp =  etai_over_etat * (uv + cos_theta*n);
+    vec3 r_out_parallel = -sqrt(fabs(1.0 - r_out_perp.length_squared())) * n;
+    return r_out_perp + r_out_parallel;
+}
+```
+
+```cpp
+class dielectric : public material {
+    public:
+        dielectric(double index_of_refraction) : ir(index_of_refraction) {}
+
+        virtual bool scatter(
+            const ray& r_in, const hit_record& rec, color& attenuation, ray& scattered
+        ) const override {
+            attenuation = color(1.0, 1.0, 1.0);
+            double refraction_ratio = rec.front_face ? (1.0/ir) : ir;
+
+            vec3 unit_direction = unit_vector(r_in.direction());
+            vec3 refracted = refract(unit_direction, rec.normal, refraction_ratio);
+
+            scattered = ray(rec.p, refracted);
+            return true;
+        }
+
+    public:
+        double ir; // Index of Refraction
+};
+```
+
+![img](https://raytracing.github.io/images/img-1.14-glass-always-refract.png)
+
+#### Total Internal Reflection
+
+对于从高折射率介质到低折射率介质的过程中，存在一种全反射现象
+$$
+\sin\theta' = \frac{\eta}{\eta'} \cdot \sin\theta
+$$
+假设是从玻璃（η = 1.5）进入空气（η = 1.0）
+$$
+\sin\theta' = \frac{1.5}{1.0} \cdot \sin\theta
+$$
+显然，若等号右边值大于1.0，等式将不成立，即此时应为全反射
+$$
+\frac{1.5}{1.0} \cdot \sin\theta > 1.0
+$$
+换元
+$$
+\sin\theta  = \sqrt{1 - \cos^2\theta} \\
+\cos\theta = \mathbf{R} \cdot \mathbf{n}
+$$
+
+```cpp
+double cos_theta = fmin(dot(-unit_direction, rec.normal), 1.0);
+double sin_theta = sqrt(1.0 - cos_theta*cos_theta);
+
+if (refraction_ratio * sin_theta > 1.0) {
+    // Must Reflect
+    ...
+} else {
+    // Can Refract
+    ...
+}
+```
+
+#### Schlick Approximation
+
+Schlick 近似值用于近似两个介质间镜面反射中的菲尼尔项
+$$
+R(θ) = R_0 + (1 - R_0)(1-cosθ)^5
+$$
+
+$$
+R_0 = (\frac{n1-n2}{n1+n2})^2
+$$
+
+### Positionable Camera
+
+![img](https://raytracing.github.io/images/fig-1.14-cam-view-geom.jpg)
+$$
+h = \tan(\frac{\theta}{2})
+$$
+相机的构造函数引入**fov视野和宽高比**，控制相机的观察范围
+
+```cpp
+camera(double vfov, double aspect_ratio) {
+    auto theta = degrees_to_radians(vfov);
+    auto h = tan(theta/2);
+    auto viewport_height = 2.0 * h;
+    auto viewport_width = aspect_ratio * viewport_height;
+
+    auto focal_length = 1.0;
+
+    origin = point3(0, 0, 0);
+    horizontal = vec3(viewport_width, 0.0, 0.0);
+    vertical = vec3(0.0, viewport_height, 0.0);
+    lower_left_corner = origin - horizontal/2 - vertical/2 - vec3(0, 0, focal_length);
+}
+```
+
+#### Positioning and Orienting the Camera
+
+<img src="https://raytracing.github.io/images/fig-1.15-cam-view-dir.jpg" alt="img" style="zoom:80%;" />
+
+![img](https://raytracing.github.io/images/fig-1.16-cam-view-up.jpg)
+
+在新的坐标中，假设相机朝向 **-w** 方向，**vup** 默认为**（0，1，0）**，根据 cross 可求得 **u、v** 向量
+
+继续引入**pos，lookat，vup**三个参数，控制相机的位置和观察方向
+
+```cpp
+camera(point3 lookfrom, point3 lookat, vec3   vup, double vfov, double aspect_ratio) {
+    auto theta = degrees_to_radians(vfov);
+    auto h = tan(theta/2);
+    auto viewport_height = 2.0 * h;
+    auto viewport_width = aspect_ratio * viewport_height;
+
+    auto w = unit_vector(lookfrom - lookat);
+    auto u = unit_vector(cross(vup, w));
+    auto v = cross(w, u);
+
+    origin = lookfrom;
+    horizontal = viewport_width * u;
+    vertical = viewport_height * v;
+    lower_left_corner = origin - horizontal/2 - vertical/2 - w;
+}
+```
+
+![img](https://raytracing.github.io/images/img-1.18-view-distant.png)
+
+### Defocus Blur
+
+大多数摄影师称其为 “景深”
+
+相机镜头模型通常如下
+
+![img](https://raytracing.github.io/images/fig-1.17-cam-lens.jpg)
+
+为了简化问题，假设射线是从镜头出发，并射向聚焦平面
+
+![img](https://raytracing.github.io/images/fig-1.18-cam-film-plane.jpg)
+
+#### Generating Sample Rays
+
+当光线从相机pos出发，不存在焦散，此时引入一个偏移量，令射线从以相机为center的一个圆盘范围内射出，即增大光圈大小
+
+```cpp
+vec3 random_in_unit_disk() {
+    while (true) {
+        auto p = vec3(random_double(-1,1), random_double(-1,1), 0);
+        if (p.length_squared() >= 1) continue;
+        return p;
+    }
+}
+```
+
+引入了**光圈大小aperture和焦点距离focus_dist**，此前一直假设焦点距离为1unit，现在需要等比调整，即对每个参数乘上focus_dist
+
+```cpp
+class camera {
+    public:
+        camera(
+            point3 lookfrom,
+            point3 lookat,
+            vec3   vup,
+            double vfov, // vertical field-of-view in degrees
+            double aspect_ratio,
+            double aperture,
+            double focus_dist
+        ) {
+            auto theta = degrees_to_radians(vfov);
+            auto h = tan(theta/2);
+            auto viewport_height = 2.0 * h;
+            auto viewport_width = aspect_ratio * viewport_height;
+
+            w = unit_vector(lookfrom - lookat);
+            u = unit_vector(cross(vup, w));
+            v = cross(w, u);
+
+            origin = lookfrom;
+            horizontal = focus_dist * viewport_width * u;
+            vertical = focus_dist * viewport_height * v;
+            lower_left_corner = origin - horizontal/2 - vertical/2 - focus_dist*w;
+
+            lens_radius = aperture / 2;
+        }
+
+
+        ray get_ray(double s, double t) const {
+            vec3 rd = lens_radius * random_in_unit_disk();
+            vec3 offset = u * rd.x() + v * rd.y();
+
+            return ray(
+                origin + offset,
+                lower_left_corner + s*horizontal + t*vertical - origin - offset
+            );
+        }
+
+    private:
+        point3 origin;
+        point3 lower_left_corner;
+        vec3 horizontal;
+        vec3 vertical;
+        vec3 u, v, w;
+        double lens_radius;
+};
+```
+
+![img](https://raytracing.github.io/images/img-1.20-depth-of-field.png)
+
+### A Final Render
+
+```cpp
+hittable_list random_scene() {
+    hittable_list world;
+
+    auto ground_material = make_shared<lambertian>(color(0.5, 0.5, 0.5));
+    world.add(make_shared<sphere>(point3(0,-1000,0), 1000, ground_material));
+
+    for (int a = -11; a < 11; a++) {
+        for (int b = -11; b < 11; b++) {
+            auto choose_mat = random_double();
+            point3 center(a + 0.9*random_double(), 0.2, b + 0.9*random_double());
+
+            if ((center - point3(4, 0.2, 0)).length() > 0.9) {
+                shared_ptr<material> sphere_material;
+
+                if (choose_mat < 0.8) {
+                    // diffuse
+                    auto albedo = color::random() * color::random();
+                    sphere_material = make_shared<lambertian>(albedo);
+                    world.add(make_shared<sphere>(center, 0.2, sphere_material));
+                } else if (choose_mat < 0.95) {
+                    // metal
+                    auto albedo = color::random(0.5, 1);
+                    auto fuzz = random_double(0, 0.5);
+                    sphere_material = make_shared<metal>(albedo, fuzz);
+                    world.add(make_shared<sphere>(center, 0.2, sphere_material));
+                } else {
+                    // glass
+                    sphere_material = make_shared<dielectric>(1.5);
+                    world.add(make_shared<sphere>(center, 0.2, sphere_material));
+                }
+            }
+        }
+    }
+
+    auto material1 = make_shared<dielectric>(1.5);
+    world.add(make_shared<sphere>(point3(0, 1, 0), 1.0, material1));
+
+    auto material2 = make_shared<lambertian>(color(0.4, 0.2, 0.1));
+    world.add(make_shared<sphere>(point3(-4, 1, 0), 1.0, material2));
+
+    auto material3 = make_shared<metal>(color(0.7, 0.6, 0.5), 0.0);
+    world.add(make_shared<sphere>(point3(4, 1, 0), 1.0, material3));
+
+    return world;
+}
+
+int main() {
+
+    // Image
+
+    const auto aspect_ratio = 3.0 / 2.0;
+    const int image_width = 1200;
+    const int image_height = static_cast<int>(image_width / aspect_ratio);
+    const int samples_per_pixel = 500;
+    const int max_depth = 50;
+
+    // World
+
+    auto world = random_scene();
+
+    // Camera
+
+    point3 lookfrom(13,2,3);
+    point3 lookat(0,0,0);
+    vec3 vup(0,1,0);
+    auto dist_to_focus = 10.0;
+    auto aperture = 0.1;
+
+    camera cam(lookfrom, lookat, vup, 20, aspect_ratio, aperture, dist_to_focus);
+
+    // Render
+
+    std::cout << "P3\n" << image_width << ' ' << image_height << "\n255\n";
+
+    for (int j = image_height-1; j >= 0; --j) {
+        ...
+}
+```
+
+![img](https://raytracing.github.io/images/img-1.21-book1-final.jpg)
