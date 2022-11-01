@@ -21,6 +21,10 @@ export default defineConfig({
             {
               text: 'Ray Tracing The Next Week',
               link: '/RayTracingTheNextWeek'
+            },
+            {
+              text: 'Games 101',
+              link: '/games101'
             }
           ]
         }
