@@ -25,6 +25,10 @@ export default defineConfig({
             {
               text: 'Games 101',
               link: '/games101'
+            },
+            {
+              text: 'Games 202',
+              link: '/Games202'
             }
           ]
         }
